@@ -1,0 +1,436 @@
+# 🔄 Simulation 文件夹改进总结
+
+**更新时间**: 2026-02-01  
+**改进范围**: simulation 文件夹中的所有 Python 脚本  
+**目的**: 支持动态传感器配置，无需修改仿真脚本
+
+---
+
+## 📝 改进内容
+
+### 1️⃣ quick_simulate.py
+
+**修改位置**: 第 40-42 行
+
+**之前**:
+```python
+model = CartpoleModel(obs_dim=6, act_dim=env.act_dim)
+alg = DQN(model, gamma=0.95, lr=0.001)
+agent = CartpoleAgent(alg, act_dim=env.act_dim, e_greed=0.0, e_greed_decrement=0.0)
+```
+
+**之后**:
+```python
+obs_dim = 6  # 固定：[x, y, x_prev, y_prev, last_action, lost_flag]
+act_dim = env.act_dim  # 从环境自动读取传感器数量
+
+model = CartpoleModel(obs_dim=obs_dim, act_dim=act_dim)
+alg = DQN(model, gamma=0.95, lr=0.001)
+agent = CartpoleAgent(alg, act_dim=act_dim, e_greed=0.0, e_greed_decrement=0.0)
+```
+
+**优点**: 使代码更清晰，act_dim 的来源更明确
+
+---
+
+### 2️⃣ verify_environment.py
+
+**修改位置**: 第 134-142 行
+
+**之前**:
+```python
+print("\n[2] Creating environment...")
+env = Env(seed=42)
+print("    [OK] Environment created")
+
+print("\n[3] Creating agent...")
+model = CartpoleModel(obs_dim=6, act_dim=2)
+alg = DQN(model, gamma=0.95, lr=0.001)
+agent = CartpoleAgent(alg, act_dim=2, e_greed=0.0, e_greed_decrement=0.0)
+```
+
+**之后**:
+```python
+print("\n[2] Creating environment...")
+env = Env(seed=42)
+print("    [OK] Environment created")
+print(f"    [INFO] Sensors detected: {len(env.sensors)}, act_dim: {env.act_dim}")
+
+print("\n[3] Creating agent...")
+obs_dim = 6  # 固定：[x, y, x_prev, y_prev, last_action, lost_flag]
+act_dim = env.act_dim  # 从环境自动读取传感器数量
+model = CartpoleModel(obs_dim=obs_dim, act_dim=act_dim)
+alg = DQN(model, gamma=0.95, lr=0.001)
+agent = CartpoleAgent(alg, act_dim=act_dim, e_greed=0.0, e_greed_decrement=0.0)
+```
+
+**优点**: 
+- 动态检测传感器数量而不是硬编码 2
+- 输出诊断信息显示检测到的传感器数量
+- 验证时会显示实际的配置
+
+---
+
+### 3️⃣ simulate_and_visualize.py
+
+**修改内容 1**: 重写 print_summary 函数（第 263-305 行）
+
+**之前**:
+- 硬编码了 "Radar 0" 和 "Radar 1"
+- 只能处理 2 个传感器
+- 无法自动适配新的传感器配置
+
+**之后**:
+```python
+def print_summary(recorder, env=None):
+    """打印仿真摘要（支持动态传感器数量）"""
+    # ...
+    num_sensors = int(np.max(actions)) + 1  # 从action中推断传感器数量
+    if env is not None:
+        num_sensors = env.act_dim  # 如果有env，优先使用env的act_dim
+    
+    print(f"\nSensor usage ({num_sensors} sensors total):")
+    
+    # 传感器使用统计
+    for sensor_id in range(num_sensors):
+        count = np.sum(actions == sensor_id)
+        percentage = count / total_steps * 100 if total_steps > 0 else 0
+        print(f"  Sensor {sensor_id}: {count} times ({percentage:.1f}%)")
+    
+    # ... 检测统计 ...
+```
+
+**优点**:
+- 自动适配任何数量的传感器
+- 使用循环遍历所有传感器
+- 输出更清晰的格式
+
+**修改内容 2**: 更新 print_summary 的调用（第 357 行）
+
+**之前**:
+```python
+print_summary(recorder)
+```
+
+**之后**:
+```python
+print_summary(recorder, env=env)
+```
+
+**优点**: 将环境对象传递给函数，以便获取准确的传感器数量
+
+---
+
+### 4️⃣ launcher.py
+
+**修改位置**: 第 10-16 行
+
+**添加**:
+```python
+print("💡 TIP: 修改 Envir.py 中的 sensors 列表即可添加/修改传感器")
+print("   所有仿真脚本都会自动适配新的传感器配置")
+```
+
+**优点**: 提醒用户关于动态传感器配置的功能
+
+---
+
+## ✅ 测试结果
+
+运行 `verify_environment.py` 后的输出：
+
+```
+[2] Creating environment...
+    [OK] Environment created
+    [INFO] Sensors detected: 3, act_dim: 3
+
+[3] Creating agent...
+    [OK] Agent created
+
+[4] Running 10-step simulation...
+    [OK] Simulation successful (total reward: -12.00)
+
+============================================================
+[SUCCESS] All functionality tests passed!
+============================================================
+```
+
+✅ 确认修改工作正常！
+
+---
+
+## 🎯 现在的工作流程
+
+### 添加新传感器
+
+1. **打开** [Envir.py](../Envir.py)
+2. **修改** `self.sensors` 列表，例如添加第 4 个传感器
+3. **保存** 文件
+4. **运行仿真**:
+   ```bash
+   cd simulation
+   python quick_simulate.py
+   ```
+5. ✅ **完成** - 所有脚本自动适配新配置！
+
+### 无需修改的项目
+
+✅ quick_simulate.py - 自动读取 act_dim  
+✅ simulate_and_visualize.py - 自动适配传感器数量  
+✅ verify_environment.py - 显示实际检测到的传感器  
+✅ launcher.py - 通过调用其他脚本自动适配  
+
+---
+
+## 📊 修改对比
+
+| 项目 | 修改前 | 修改后 |
+|------|--------|--------|
+| **传感器数量** | 硬编码 2 | 动态读取 |
+| **脚本兼容性** | 仅限 2 传感器 | 任意数量 |
+| **诊断信息** | 无法显示实际配置 | 显示检测到的传感器 |
+| **代码维护** | 添加传感器需修改多个脚本 | 仅需修改 Envir.py |
+
+---
+
+## 💡 技术细节
+
+### 为什么这样设计？
+
+1. **obs_dim 固定为 6**: 观察空间结构固定 [x, y, x_prev, y_prev, last_action, lost_flag]
+2. **act_dim 动态获取**: 动作空间等于传感器数量，从 Envir.py 自动读取
+3. **print_summary 动态统计**: 遍历所有可能的 action 值确定传感器数量
+
+### 向后兼容性
+
+✅ 所有修改都是向后兼容的  
+✅ 2 个传感器的旧模型仍然可以正常使用  
+✅ 添加新传感器后需要重新训练模型  
+
+---
+
+## 🚀 下一步
+
+### 用户操作
+
+1. 修改 [Envir.py](../Envir.py) 中的 `self.sensors` 列表
+2. 运行 `python simulation/verify_environment.py` 验证
+3. 运行 `python simulation/quick_simulate.py` 测试
+4. 如需要，运行 `python train(2).py` 重新训练模型
+
+### 对开发者
+
+所有仿真脚本现在都遵循这个模式：
+```python
+env = Env()
+obs_dim = 6              # 固定
+act_dim = env.act_dim    # 动态
+# ... 使用 act_dim 初始化模型 ...
+```
+
+---
+
+## 📋 文件修改清单
+
+- ✅ `simulation/quick_simulate.py` - 优化初始化逻辑
+- ✅ `simulation/verify_environment.py` - 动态检测+显示传感器信息
+- ✅ `simulation/simulate_and_visualize.py` - 重写 print_summary 支持动态传感器
+- ✅ `simulation/launcher.py` - 添加提示信息
+
+---
+
+### 5️⃣ quick_simulate.py（额外改进）
+
+**修改位置 1**: 第 112-125 行（颜色配置）
+
+**之前**: 硬编码 `colors = ['#FF6B6B', '#4ECDC4']`  
+**之后**: 动态调色板 + 循环生成颜色
+
+```python
+color_palette = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F']
+colors = []
+for i in range(len(env.sensors)):
+    if i < len(color_palette):
+        colors.append(color_palette[i])
+    else:
+        colors.append(f'#{rand_module.randint(0, 0xFFFFFF):06x}')
+```
+
+**修改位置 2**: 第 190-203 行（统计输出）
+
+**之前**:
+```python
+usage_0 = np.sum(actions == 0)
+usage_1 = np.sum(actions == 1)
+print(f"\nRadar usage:")
+print(f"  Radar 0: {usage_0} times ...")
+print(f"  Radar 1: {usage_1} times ...")
+```
+
+**之后**:
+```python
+num_sensors = len(env.sensors)
+print(f"\nSensor usage ({num_sensors} sensors total):")
+
+for sensor_id in range(num_sensors):
+    usage = np.sum(actions == sensor_id)
+    if usage > 0:
+        print(f"  Sensor {sensor_id}: {usage} times ...")
+        detect_count = np.sum(detects[actions == sensor_id])
+        print(f"    Detection rate: {detect_count/usage*100:.1f}%")
+```
+
+---
+
+### 6️⃣ simulate_and_visualize.py（额外改进）
+
+**修改位置 1**: 第 161-176 行（颜色配置）
+
+同 quick_simulate.py 的动态颜色配置
+
+**修改位置 2**: 第 240-250 行（动作序列图表）
+
+**之前**: 硬编码 `ax.set_yticklabels(['Radar 0', 'Radar 1'])`
+
+**之后**:
+```python
+num_sensors = len(env.sensors)
+sensor_ticks = list(range(num_sensors))
+sensor_labels = [f'Sensor {i}' for i in range(num_sensors)]
+ax.set_yticks(sensor_ticks)
+ax.set_yticklabels(sensor_labels)
+```
+
+**优点**: 图表自动适配任意数量的传感器
+
+---
+
+## ✅ 完整测试结果
+
+### verify_environment.py 输出
+```
+[INFO] Sensors detected: 3, act_dim: 3
+[OK] Agent created
+[OK] Simulation successful (total reward: -12.00)
+[SUCCESS] All functionality tests passed!
+```
+
+### quick_simulate.py 输出
+```
+Running simulation...
+  Episode ended at step 27
+
+Sensor usage (3 sensors total):
+  Sensor 1: 21 times (77.8%)
+    Detection rate: 95.2%
+  Sensor 2: 6 times (22.2%)
+    Detection rate: 66.7%
+```
+
+✅ 所有脚本都正确支持 3 个传感器！
+
+---
+
+## 📋 完整的文件修改清单
+
+- ✅ `simulation/quick_simulate.py` - 2处修改
+  - 颜色配置
+  - 统计输出
+  
+- ✅ `simulation/verify_environment.py` - 1处修改
+  - 显示传感器信息
+  
+- ✅ `simulation/simulate_and_visualize.py` - 3处修改
+  - print_summary 函数
+  - 颜色配置
+  - 动作序列图表
+  
+- ✅ `simulation/launcher.py` - 1处修改
+  - 提示信息
+
+### 7️⃣ simulate_and_visualize.py（bug 修复）
+
+**修改位置**: 第 258-274 行（检测率图表）
+
+**问题**: 当 episode 长度 < 10 步时，`np.convolve` 返回空数组，导致 matplotlib 报错
+
+**之前**:
+```python
+detect_rate = np.convolve(detects.astype(float), np.ones(10)/10, mode='valid')
+window_times = times[9:]
+ax.plot(window_times, detect_rate * 100, 'g-', linewidth=2, ...)
+```
+
+**之后**:
+```python
+if len(detects) >= 10:
+    # 长 episode：10 步滑动窗口
+    detect_rate = np.convolve(detects.astype(float), np.ones(10)/10, mode='valid')
+    window_times = times[9:]
+    ax.plot(window_times, detect_rate * 100, 'g-', linewidth=2, ...)
+    ax.set_title('Detection Rate (Sliding Window)')
+else:
+    # 短 episode：显示总体检测率
+    overall_detect_rate = np.mean(detects) * 100 if len(detects) > 0 else 0
+    ax.axhline(y=overall_detect_rate, color='g', linestyle='-', ...)
+    ax.set_title('Detection Rate')
+```
+
+**优点**: 自动适配任意长度的 episode
+
+---
+
+### 8️⃣ simulate_and_visualize.py（内存优化）
+
+**修改位置**: 第 374-402 行（图表绘制和保存）
+
+**问题**: 多 episode 运行时，matplotlib 创建多个 figure 但未关闭，导致内存泄漏和 RuntimeWarning
+
+**之前**:
+```python
+plot_trajectory(recorder, env, save_path=traj_path)
+plot_statistics(recorder, env=env, save_path=stat_path)
+...
+fig, ax = plt.subplots(figsize=(10, 6))
+...
+plt.savefig(compare_path, dpi=150, bbox_inches='tight')
+```
+
+**之后**:
+```python
+fig_traj = plot_trajectory(recorder, env, save_path=traj_path)
+plt.close(fig_traj)
+
+fig_stat = plot_statistics(recorder, env=env, save_path=stat_path)
+plt.close(fig_stat)
+...
+fig, ax = plt.subplots(figsize=(10, 6))
+...
+plt.savefig(compare_path, dpi=150, bbox_inches='tight')
+plt.close(fig)
+```
+
+**优点**: 
+- 及时释放内存
+- 消除 matplotlib RuntimeWarning
+- 支持大量 episodes 的运行
+
+---
+
+## ✅ 最终验证结果
+
+### 3 Episode 完整运行（无任何警告）
+```
+Episode 1: 32 steps, 279.76 reward
+Episode 2: 28 steps, 281.06 reward  
+Episode 3: 24 steps, 242.99 reward
+
+✅ 无任何警告或错误
+✅ 所有图表成功保存
+✅ 内存正常释放
+```
+
+---
+
+**总修改数**: 8处代码改进
+
